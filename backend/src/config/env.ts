@@ -41,10 +41,13 @@ export const env = {
     return process.env.NODE_ENV || 'development'
   },
   get frontendUrl() {
-    return process.env.FRONTEND_URL || 'http://localhost:5173'
+    if (process.env.FRONTEND_URL) return process.env.FRONTEND_URL
+    if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
+    return 'http://localhost:5173'
   },
   get cookieSecure() {
-    return process.env.COOKIE_SECURE === 'true'
+    if (process.env.COOKIE_SECURE !== undefined) return process.env.COOKIE_SECURE === 'true'
+    return !!process.env.VERCEL_URL
   },
   get cookieSameSite() {
     return (process.env.COOKIE_SAMESITE || 'lax') as 'lax' | 'strict' | 'none'
