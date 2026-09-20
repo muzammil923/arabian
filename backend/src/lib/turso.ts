@@ -1,25 +1,50 @@
-﻿import { createRequire } from 'module'
-import type { Client, InStatement, InValue, ResultSet } from '@libsql/client'
+﻿import { createClient as createHttpClient } from '@libsql/client/http'
+import type { Client, InStatement, InValue, ResultSet } from '@libsql/client/http'
+import { createRequire } from 'module'
 import fs from 'fs'
 import path from 'path'
 import { loadEnv, env } from '../config/env'
 
-const runtimeRequire = createRequire(__filename)
-
-function clientModuleFor(url: string): string {
-  // The pure-JS HTTP client has no native bindings, so it bundles cleanly in
-  // serverless environments. The node client (local file DBs, dev/tests) is
-  // only required when actually pointed at a file: URL.
-  return url.startsWith('https://') || url.startsWith('http://') ? '@libsql/client/http' : '@libsql/client'
+// Lazy-load the native node client only for local file: databases (dev/tests).
+// Vercel/serverless bundles keep the pure-JS HTTP client, so no native
+// bindings ever need to load in Lambda.
+// The native node client is needed only for local file: databases. The module
+// specifier is assembled at runtime from a reversed literal so that neither
+// esbuild (esbuild: true) nor @vercel/nft can statically trace it into the
+// serverless bundle — the native bindings can never ship or load in Lambda.
+const nodeRequire = createRequire(__filename)
+const NODE_CLIENT_SPEC_REV = 'tnelirc/qsli@' // reversed: '@libsql/client'
+function reverse(s: string): string {
+  return s.split('').reverse().join('')
+}
+function createNodeClient(url: string, authToken?: string): Client {
+  const spec = reverse(NODE_CLIENT_SPEC_REV)
+  return nodeRequire(spec).createClient({ url, authToken: authToken || undefined }) as Client
 }
 
 export function createDb(url: string, authToken?: string): Client {
   const httpUrl = url.startsWith('libsql://') ? `https://${url.slice('libsql://'.length)}` : url
-  const createClient = runtimeRequire(clientModuleFor(httpUrl)).createClient as unknown as (config: {
-    url: string
-    authToken?: string
-  }) => Client
-  return createClient({ url: httpUrl, authToken: authToken || undefined })
+  const remote =
+    httpUrl.startsWith('https://') ||
+    httpUrl.startsWith('http://') ||
+    url.startsWith('libsql://')
+  if (remote) {
+    return createHttpClient({ url: httpUrl, authToken: authToken || undefined })
+  }
+  // file: URL — local/dev only.
+  const filePath = url.replace('file:', '')
+  const dir = path.dirname(filePath)
+  if (dir && dir !== '.') {
+    try {
+      fs.mkdirSync(dir, { recursive: true })
+    } catch {
+      // Read-only filesystems (e.g. Vercel serverless) can't create DB files.
+    }
+  }
+  const db = createNodeClient(url, authToken)
+  // Best-effort FK enforcement for local databases.
+  void db.execute({ sql: 'PRAGMA foreign_keys = ON', args: [] }).catch(() => undefined)
+  return db
 }
 
 /**
@@ -31,22 +56,12 @@ export function getDb(): Client {
   const url = env.tursoDatabaseUrl
   if (url.startsWith('file:')) {
     if (process.env.VERCEL) {
-      console.warn('[turso] TURSO_DATABASE_URL is a local file on Vercel. Set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN (Turso cloud) or most API calls will fail.')
-    }
-    const filePath = url.replace('file:', '')
-    const dir = path.dirname(filePath)
-    if (dir && dir !== '.') {
-      try {
-        fs.mkdirSync(dir, { recursive: true })
-      } catch {
-        // Read-only filesystems (e.g. Vercel serverless) can't create DB files.
-      }
+      console.warn(
+        '[turso] TURSO_DATABASE_URL is a local file on Vercel. Set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN (Turso cloud) or most API calls will fail.',
+      )
     }
   }
-  const db = createDb(url, env.tursoAuthToken)
-  // Best-effort FK enforcement for local file databases.
-  void db.execute({ sql: 'PRAGMA foreign_keys = ON', args: [] }).catch(() => undefined)
-  return db
+  return createDb(url, env.tursoAuthToken)
 }
 
 export const db = getDb()
