@@ -1,10 +1,24 @@
-﻿import { createClient, type Client, type InStatement, type InValue, type ResultSet } from '@libsql/client'
+﻿import { createRequire } from 'module'
+import type { Client, InStatement, InValue, ResultSet } from '@libsql/client'
 import fs from 'fs'
 import path from 'path'
 import { loadEnv, env } from '../config/env'
 
+const runtimeRequire = createRequire(__filename)
+
+function clientModuleFor(url: string): string {
+  // The pure-JS HTTP client has no native bindings, so it bundles cleanly in
+  // serverless environments. The node client (local file DBs, dev/tests) is
+  // only required when actually pointed at a file: URL.
+  return url.startsWith('https://') || url.startsWith('http://') ? '@libsql/client/http' : '@libsql/client'
+}
+
 export function createDb(url: string, authToken?: string): Client {
   const httpUrl = url.startsWith('libsql://') ? `https://${url.slice('libsql://'.length)}` : url
+  const createClient = runtimeRequire(clientModuleFor(httpUrl)).createClient as unknown as (config: {
+    url: string
+    authToken?: string
+  }) => Client
   return createClient({ url: httpUrl, authToken: authToken || undefined })
 }
 
