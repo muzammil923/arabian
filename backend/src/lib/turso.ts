@@ -4,7 +4,8 @@ import path from 'path'
 import { loadEnv, env } from '../config/env'
 
 export function createDb(url: string, authToken?: string): Client {
-  return createClient({ url, authToken: authToken || undefined })
+  const httpUrl = url.startsWith('libsql://') ? `https://${url.slice('libsql://'.length)}` : url
+  return createClient({ url: httpUrl, authToken: authToken || undefined })
 }
 
 /**
