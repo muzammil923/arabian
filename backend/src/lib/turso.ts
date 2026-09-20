@@ -16,9 +16,18 @@ export function getDb(): Client {
   loadEnv()
   const url = env.tursoDatabaseUrl
   if (url.startsWith('file:')) {
+    if (process.env.VERCEL) {
+      console.warn('[turso] TURSO_DATABASE_URL is a local file on Vercel. Set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN (Turso cloud) or most API calls will fail.')
+    }
     const filePath = url.replace('file:', '')
     const dir = path.dirname(filePath)
-    if (dir && dir !== '.') fs.mkdirSync(dir, { recursive: true })
+    if (dir && dir !== '.') {
+      try {
+        fs.mkdirSync(dir, { recursive: true })
+      } catch {
+        // Read-only filesystems (e.g. Vercel serverless) can't create DB files.
+      }
+    }
   }
   const db = createDb(url, env.tursoAuthToken)
   // Best-effort FK enforcement for local file databases.
